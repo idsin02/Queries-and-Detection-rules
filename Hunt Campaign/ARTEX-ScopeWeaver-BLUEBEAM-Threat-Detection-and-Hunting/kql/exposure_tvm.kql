@@ -1,0 +1,21 @@
+// Purpose : Inventory devices that Defender Vulnerability Management maps to CVEs linked to this activity.
+// CVE map : CVE-2026-31431 (Linux kernel LPE, PoC used post-webshell); CVE-2022-31814 (association only).
+// Data : DeviceTvmSoftwareVulnerabilities, DeviceInfo (MDE P2 / Defender Vulnerability Management).
+// Caveat : No affected/fixed versions were published. This relies entirely on MDVM's CVE mapping.
+// Distro backports cause both FP and FN; validate against the distro advisory.
+// Fidelity: Hunting (exposure, not compromise).
+let Cves = dynamic(["CVE-2026-31431","CVE-2022-31814"]);
+let Facing = DeviceInfo
+| where Timestamp > ago(7d)
+| summarize arg_max(Timestamp, IsInternetFacing, OSPlatform, OSVersion) by DeviceId;
+DeviceTvmSoftwareVulnerabilities
+| where CveId in (Cves)
+| join kind=leftouter Facing on DeviceId
+| extend Priority = iff(IsInternetFacing == true, "High", "Medium")
+| summarize Devices = dcount(DeviceId),
+DeviceList = make_set(DeviceName, 200),
+Versions = make_set(SoftwareVersion, 50),
+Platforms = make_set(OSPlatform, 10)
+by CveId, SoftwareVendor, SoftwareName, VulnerabilitySeverityLevel,
+RecommendedSecurityUpdate, Priority
+| order by Priority asc, Devices desc
