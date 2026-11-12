@@ -1,0 +1,31 @@
+// Purpose : Shells and LOLBins spawned by web servers, DB engines, or PHP/Java handlers.
+// Why : Observed lineages: sqlservr.exe -> cmd -> curl (SQL service account); w3wp.exe webshell exec;
+// lsphp -> sh -c (cPanel/LiteSpeed); Java app server running JSP webshells (Weaver).
+// Data : DeviceProcessEvents (Windows + Linux MDE).
+// Fidelity: High for sqlservr/w3wp with Critical markers; Medium otherwise.
+// Tuning : java/tomcat parents are noisy. Baseline DeviceName + ProcessCommandLine for some days and
+// exclude known health/maintenance scripts before alerting.
+let WebParents = dynamic(["w3wp.exe","sqlservr.exe","lsphp","php-fpm","php-cgi","php","httpd","apache2",
+  "nginx","java","java.exe","tomcat","tomcat9.exe","mysqld","mysqld.exe"]);
+let Children = dynamic(["cmd.exe","powershell.exe","pwsh.exe","curl.exe","certutil.exe","whoami.exe",
+  "nltest.exe","dsquery.exe","dsget.exe","net.exe","net1.exe","systeminfo.exe",
+  "sh","bash","dash","python","python3","curl","wget","id","whoami"]);
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where InitiatingProcessFileName in~ (WebParents) or InitiatingProcessParentFileName in~ (WebParents)
+| where FileName in~ (Children)
+| extend Lineage = strcat(InitiatingProcessParentFileName, " > ", InitiatingProcessFileName, " > ", FileName)
+| extend Signal = case(
+  Lineage has "sqlservr.exe", "MSSQL -> shell (xp_cmdshell-like)",
+  Lineage has "w3wp.exe", "IIS worker -> shell",
+  Lineage has_any ("lsphp","php-fpm","php-cgi"), "PHP handler -> shell",
+  Lineage has_any ("java","tomcat"), "Java app server -> shell",
+  Lineage has "mysqld", "MySQL -> shell",
+  "Other web/DB parent")
+| extend Priority = case(
+  ProcessCommandLine has_any ("ntfy.sh","webhook.site","/dev/tcp/","urlcache","copy_fail"), "Critical",
+  Signal startswith "MSSQL" or Signal startswith "IIS" or Signal startswith "MySQL", "High","Medium")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Count = count(),
+  Cmds = make_set(ProcessCommandLine, 25)
+  by DeviceName, AccountName, Lineage, Signal, Priority
+| order by Priority asc, LastSeen desc
