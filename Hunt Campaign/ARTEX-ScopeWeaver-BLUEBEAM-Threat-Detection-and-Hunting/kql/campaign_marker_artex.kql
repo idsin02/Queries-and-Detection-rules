@@ -1,0 +1,27 @@
+// Purpose : ARTEX-specific artifacts: ntfy "artex-" topics, probe files, beacon strings, SQL module output,
+// Data : DeviceProcessEvents, DeviceFileEvents, DeviceNetworkEvents.
+// Fidelity: High for literal markers; the intent-ID regex is Medium (generic-looking names are possible).
+// Tuning : Exclude your own detection-engineering / intel-notes paths, which will contain these strings.
+let MarkerRx = @"(?i)ntfy\.sh/artex-|artex[_-]probe|HELLO_FROM_|HELLO1298_TEST_041923|SQLPWN WROTE|Artex-Four-";
+let IntentRx = @"(?i)(^|[\\/])i\d{3,5}_([0-9a-f]{6,10}|pth|probe)\.(ps1|sql|out|jsp|jspx|txt)$";
+let IntentCmd = @"(?i)\bi\d{3,5}_[0-9a-f]{6,10}\.(ps1|sql|out)\b";
+let KnownFiles = dynamic(["prod_shell.ps1","tmpq794ba1.ps1","ebx_chunk1.csv","q_tabs.sql","artex_probe.txt"]);
+union isfuzzy=true
+( DeviceProcessEvents
+| where ProcessCommandLine matches regex MarkerRx or ProcessCommandLine matches regex IntentCmd
+| project Timestamp, DeviceName, AccountName, Source = "Process",
+Artifact = ProcessCommandLine, Parent = InitiatingProcessFileName ),
+( DeviceFileEvents
+| where FileName in~ (KnownFiles) or FolderPath has ".artex_probe_" or FolderPath matches regex IntentRx
+or FileName matches regex @"(?i)^(deploy|recon2?)_probe_[0-9a-f]{8,10}\.zip$"
+| project Timestamp, DeviceName, AccountName = InitiatingProcessAccountName, Source = "File",
+Artifact = FolderPath, Parent = InitiatingProcessFileName ),
+( DeviceNetworkEvents
+| where RemoteUrl matches regex MarkerRx or RemoteUrl has "artex"
+| project Timestamp, DeviceName, AccountName = InitiatingProcessAccountName, Source = "Network",
+Artifact = RemoteUrl, Parent = InitiatingProcessFileName )
+| extend Priority = iff(Artifact matches regex MarkerRx or Artifact has_any (KnownFiles), "Critical", "High")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Count = count(),
+Artifacts = make_set(Artifact, 25)
+by DeviceName, AccountName, Source, Parent, Priority
+| order by Priority asc, LastSeen desc
