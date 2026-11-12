@@ -1,0 +1,28 @@
+// Purpose : Scripted egress to webhook/notification services used for ARTEX signalling and exfiltration.
+// Why : curl -> https://*.webhook.site/* carried AD/LDAP dumps, krbtgt/gMSA secrets, and LAPS attributes;
+// curl POST to ntfy.sh/artex-* confirmed command execution.
+// Data : DeviceNetworkEvents, DeviceProcessEvents.
+// Fidelity: Hunting by default; Critical/High when an artex topic or server-process parent is present.
+// Tuning : Both services are common in dev workflows. Exclude known dev workstations and CI runners
+// (DeviceName or device tag), and alert only on servers or server-process parents.
+let Services = dynamic(["webhook.site","ntfy.sh"]);
+let Clients = dynamic(["curl.exe","curl","powershell.exe","pwsh.exe","pwsh","python.exe","python3","python","wget"]);
+let ServerParents = dynamic(["sqlservr.exe","w3wp.exe","java","java.exe","lsphp","php-fpm","mysqld","cmd.exe"]);
+union isfuzzy=true
+( DeviceNetworkEvents
+| where RemoteUrl has_any (Services)
+| project Timestamp, DeviceName, Proc = InitiatingProcessFileName, Parent = InitiatingProcessParentFileName,
+Account = InitiatingProcessAccountName, Detail = strcat(RemoteUrl, " | ", InitiatingProcessCommandLine) ),
+( DeviceProcessEvents
+| where FileName in~ (Clients) and ProcessCommandLine has_any (Services)
+| project Timestamp, DeviceName, Proc = FileName, Parent = InitiatingProcessFileName,
+Account = AccountName, Detail = ProcessCommandLine )
+| where Proc in~ (Clients) or Parent in~ (ServerParents)
+| extend Priority = case(
+Detail has "artex", "Critical",
+Parent in~ ("sqlservr.exe","w3wp.exe","java","java.exe","lsphp"), "High",
+Detail has_any (" -d ","-X POST","--data"," -F ","Invoke-RestMethod"), "Medium","Hunting")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Count = count(),
+Details = make_set(Detail, 20)
+by DeviceName, Account, Proc, Parent, Priority
+| order by Priority asc, LastSeen desc
