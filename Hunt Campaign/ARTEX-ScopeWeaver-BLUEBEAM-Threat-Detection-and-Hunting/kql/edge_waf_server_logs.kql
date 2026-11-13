@@ -1,0 +1,52 @@
+// Purpose : Server-side / WAF detection of ARTEX and BLUEBEAM HTTP activity.
+// Covers : Weaver OA SQLi probe and FileDownload servlet; JSP webshell parameters (t=&m=, k=&c=);
+// NTLM relay parameters; ADFS tunnelled through JSP; ARTEX probes (artex, nuclei.svg, %00);
+// /.git/HEAD; Kudu /api/command and /api/vfs; cookie-borne commands (act=); staging/C2 IPs.
+// Data : W3CIISLog, AppServiceHTTPLogs, CommonSecurityLog (WAF/proxy). Missing tables are skipped.
+// Caveats : Cookie and Accept-Language are not in default IIS/App Service logs; WAF/proxy only.
+// Kudu (*.scm.azurewebsites.net) traffic may not reach AppServiceHTTPLogs — also check
+// AppServiceAuditLogs / AppServicePlatformLogs.
+// Tuning : Kudu from DevOps IPs/agents is normal; allow-list pipeline egress. Weaver login-spray
+// threshold logic is in sigma/08b.
+let StagingC2IPs = dynamic(["103.140.154.152","116.206.125.116","139.84.132.91","139.84.134.148",
+"154.197.141.246","188.253.121.53","188.253.121.93"]);
+let Web = union isfuzzy=true
+( W3CIISLog
+| project TimeGenerated, Src = "IIS", ClientIP = cIP, Method = csMethod,
+Host = tostring(column_ifexists("csHost", "")), Uri = strcat(csUriStem, "?", csUriQuery),
+UA = csUserAgent, Cookie = tostring(column_ifexists("csCookie", "")), Status = tostring(scStatus) ),
+( AppServiceHTTPLogs
+| project TimeGenerated, Src = "AppService", ClientIP = CIp, Method = CsMethod, Host = CsHost,
+Uri = strcat(CsUriStem, "?", CsUriQuery), UA = UserAgent,
+Cookie = tostring(column_ifexists("Cookie", "")), Status = tostring(ScStatus) ),
+( CommonSecurityLog
+| where isnotempty(RequestURL)
+| project TimeGenerated, Src = strcat("CEF:", DeviceVendor), ClientIP = SourceIP, Method = RequestMethod,
+Host = DestinationHostName, Uri = RequestURL, UA = RequestClientApplication,
+Cookie = tostring(column_ifexists("RequestCookies", "")),
+Status = tostring(column_ifexists("EventOutcome", "")) );
+Web
+| where TimeGenerated > ago(30d)
+| extend Signal = case(
+Uri matches regex @"(?i)[?&]t=[^&]+&m=(sql|ping|res|https)(&|$)", "JSP webshell t/m params",
+Uri matches regex @"(?i)[?&]k=[^&]+&c=", "Probe webshell k/c params",
+Uri matches regex @"(?i)usr=[^&]*&pwd=[^&]*&sch=NTLM", "Webshell NTLM relay params",
+Uri has "/adfs/services/trust/13/usernamemixed" and Uri has ".jsp", "ADFS tunnelled via JSP",
+Cookie matches regex @"(?i)\bact=[^;]+;\s*f=", "Cookie-command webshell",
+ClientIP in (StagingC2IPs), "Staging/C2 IP",
+Uri matches regex @"(?i)artex|nuclei\.svg|%00\.(pdf|jpg|png)", "ARTEX probe marker",
+Uri has_cs "/api/cube/form/checkVsql", "Weaver checkVsql SQLi probe",
+Uri has "weaver.file.FileDownload", "Weaver FileDownload servlet",
+Host endswith ".scm.azurewebsites.net" and Uri matches regex @"(?i)^/api/(command|vfs/site/wwwroot/)", "Kudu API exec/VFS",
+Uri has "/.git/HEAD", "Git exposure probe","")
+| where isnotempty(Signal)
+| extend Priority = case(
+Signal in ("JSP webshell t/m params","Probe webshell k/c params","Webshell NTLM relay params",
+"ADFS tunnelled via JSP","Cookie-command webshell","Staging/C2 IP"), "Critical",
+Signal startswith "Kudu" and UA matches regex @"(?i)python-requests|curl/", "High",
+Signal startswith "Weaver checkVsql" or Signal startswith "ARTEX", "High",
+"Medium")
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Hits = count(),
+Uris = make_set(Uri, 20), UAs = make_set(UA, 10), Statuses = make_set(Status, 10)
+by Src, ClientIP, Host, Method, Signal, Priority
+| order by Priority asc, Hits desc
