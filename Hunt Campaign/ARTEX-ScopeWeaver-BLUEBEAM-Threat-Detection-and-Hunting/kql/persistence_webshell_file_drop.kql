@@ -1,0 +1,34 @@
+// Purpose : Webshell writes:
+// (1) DB engine writing a script file = query-log poisoning (Weaver OA technique);
+// (2) web process writing scripts into gallery/media/upload paths (masquerading);
+// (3) reported webshell file names.
+// Data : DeviceFileEvents (Windows + Linux).
+// Fidelity: (1) and (3) High; (2) Medium.
+// Tuning : (2) fires on CMS plugin/theme updates. Exclude by InitiatingProcessCommandLine
+//  (e.g. wp-cli, package managers) and known change windows.
+let ScriptExt = dynamic([".jsp",".jspx",".aspx",".ashx",".asmx",".php",".phtml"]);
+let DbProcs = dynamic(["mysqld","mysqld.exe","mariadbd","mariadbd.exe","sqlservr.exe"]);
+let WebProcs = dynamic(["w3wp.exe","lsphp","php-fpm","php-cgi","java","java.exe","httpd","nginx","certutil.exe"]);
+let SuspPaths = dynamic(["\\media\\gallery","\\images\\gallery","/images/gallery","wp-content\\ngg","wp-content/ngg",
+"wp-content/uploads","wp-content\\uploads","wp-admin/images","wp-admin\\images",
+"SIMCardFiles","/app/weaver/ecology","\\Windows\\Temp\\"]);
+let KnownNames = dynamic(["0b.php","0b1.php","0b2.php","jb.php","cangma.php","cangma.aspx","cmds.php","log.php",
+"zhaosa.aspx","zhaosaa.aspx","z.aspx","0b.aspx","0b1.aspx","rgmsr.aspx","cmdss.aspx",
+"gallery_261_Pic.aspx","gallery_262_Pic.aspx","f1169f.jsp","h1278.jsp","q601084.jsp",
+"k1278y2.jsp","i1279_808615.jsp","noticed814.jspx"]);
+DeviceFileEvents
+| where Timestamp > ago(30d)
+| where ActionType in ("FileCreated","FileModified","FileRenamed")
+| extend Ext = tolower(strcat(".", tostring(split(FileName, ".")[-1])))
+| where Ext in (ScriptExt)
+| extend Signal = case(
+InitiatingProcessFileName in~ (DbProcs), "DB engine wrote script (log poisoning)",
+FileName in~ (KnownNames), "Reported webshell name",
+InitiatingProcessFileName in~ (WebProcs) and FolderPath has_any (SuspPaths), "Web proc wrote script to media/upload path",
+"")
+| where isnotempty(Signal)
+| extend Priority = iff(Signal startswith "DB engine" or Signal startswith "Reported", "High", "Medium")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp),
+Files = make_set(FolderPath, 50), Hashes = make_set(SHA256, 50)
+by DeviceName, InitiatingProcessFileName, InitiatingProcessAccountName, Signal, Priority
+| order by Priority asc, LastSeen desc
