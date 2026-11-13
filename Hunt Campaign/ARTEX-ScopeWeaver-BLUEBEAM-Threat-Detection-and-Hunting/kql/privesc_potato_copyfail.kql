@@ -1,0 +1,33 @@
+// Purpose : Privilege escalation tradecraft seen after webshell access.
+// Windows: Potato family abusing SeImpersonatePrivilege.
+// Linux : CVE-2026-31431 PoC fetched with curl and piped into python3 (fileless).
+// Why : Observed: "start.exe -t * -p cmd.exe -l 1337 -a ..." (JayPotato), PrintSpoofer renamed "msp.out",
+// McpManagementPotato.exe run from C:\ProgramData\, "curl ... copy_fail_exp.py | python3".
+// Data : DeviceProcessEvents.
+// Fidelity: Named artifacts High/Critical. Pipe-to-python Medium. Service account -> SYSTEM shell Medium
+// (built from described technique, not a sample).
+// Tuning : Exclude red-team hosts. For pipe-to-python, allow-list known installer URLs.
+let PotatoRx = @"(?i)\s-t\s+\*\s+-p\s+\S+.*\s-l\s+\d+";
+let SvcAcct = @"(?i)^(iis apppool\\|nt service\\mssql|mssql|network service|local service)";
+union isfuzzy=true
+( DeviceProcessEvents
+| where ProcessCommandLine matches regex PotatoRx
+or FileName in~ ("McpManagementPotato.exe","msp.out")
+or ProcessCommandLine has_any ("McpManagementPotato","msp.out","GodPotato","PrintSpoofer")
+or (FolderPath has @"\ProgramData\" and FileName in~ ("by.exe","start.exe"))
+| extend Signal = "Potato tool artifact", Priority = "High" ),
+( DeviceProcessEvents
+| where ProcessCommandLine has "copy_fail"
+or (ProcessCommandLine has_any ("curl","wget") and ProcessCommandLine matches regex @"\|\s*python3?\b"
+and InitiatingProcessFileName in~ ("sh","bash","lsphp","php-fpm"))
+| extend Signal = "Remote script piped to python (CVE-2026-31431 PoC pattern)",
+Priority = iff(ProcessCommandLine has "copy_fail", "Critical", "Medium") ),
+( DeviceProcessEvents
+| where AccountSid == "S-1-5-18"
+| extend ParentAcct = strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName)
+| where ParentAcct matches regex SvcAcct
+| where FileName in~ ("cmd.exe","powershell.exe","whoami.exe","net.exe","net1.exe")
+| extend Signal = "Service account parent -> SYSTEM shell (token impersonation)", Priority = "Medium" )
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Cmds = make_set(ProcessCommandLine, 25)
+by DeviceName, AccountName, InitiatingProcessFileName, FileName, Signal, Priority
+| order by Priority asc, LastSeen desc
