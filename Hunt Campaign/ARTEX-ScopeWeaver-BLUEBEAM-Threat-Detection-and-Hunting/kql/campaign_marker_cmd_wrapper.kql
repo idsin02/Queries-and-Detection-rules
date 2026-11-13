@@ -1,0 +1,20 @@
+// Purpose : BLUEBEAM webshell client command wrapper. Every command is bracketed by random hex echoes.
+// Windows: cmd /c cd /d "<PATH>" & <CMD> & echo <HEX1> & cd & echo <HEX2>
+// Linux : sh -c /bin/sh -c "cd "<PATH>";<CMD>;echo <HEX1>;pwd;echo <HEX2>"
+// Why : Reported as an operational signature of the BLUEBEAM client across Windows and Linux.
+// Observed tokens are 8–12 hex chars; the regex allows 4–16 for variance.
+// Data : DeviceProcessEvents.
+// Fidelity: High. Other webshell managers use similar wrappers — still malicious context.
+let WinRx = @"(?i)cd\s+/d\s+""?[^&]+""?\s*&.+&\s*echo\s+[0-9a-f]{4,16}\s*&\s*cd\s*&\s*echo\s+[0-9a-f]{4,16}";
+let LinRx = @"(?i)cd\s+""[^""]+"";.+;\s*echo\s+[0-9a-f]{4,16};\s*pwd;\s*echo\s+[0-9a-f]{4,16}";
+DeviceProcessEvents
+| where Timestamp > ago(90d)
+| where ProcessCommandLine matches regex WinRx or ProcessCommandLine matches regex LinRx
+| extend Platform = iff(ProcessCommandLine matches regex WinRx, "Windows", "Linux")
+| extend InnerCmd = extract(@"(?i)(?:""\s*&|"";)\s*(.+?)\s*[;&]\s*echo\s+[0-9a-f]{4,16}", 1, ProcessCommandLine)
+| extend Priority = iff(ProcessCommandLine has_any ("/dev/tcp/","copy_fail","urlcache","potato","whoami","net user"),
+"Critical", "High")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Count = count(),
+InnerCmds = make_set(InnerCmd, 50)
+by DeviceName, AccountName, InitiatingProcessFileName, Platform, Priority
+| order by Priority asc, LastSeen desc
