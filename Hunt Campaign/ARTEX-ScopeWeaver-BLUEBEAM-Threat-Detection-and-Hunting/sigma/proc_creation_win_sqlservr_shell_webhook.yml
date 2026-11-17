@@ -1,0 +1,33 @@
+title: MSSQL Server Spawning Shell That Calls Curl to Webhook or Notification Service
+description: |
+  Detects cmd.exe or PowerShell spawned by sqlservr.exe whose command line uses curl to reach
+  ntfy.sh or webhook.site. Observed in ARTEX-driven intrusions under a SQL service account and
+  consistent with xp_cmdshell-style command execution.
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.execution
+  - attack.t1059.003
+  - attack.t1202
+  - attack.exfiltration
+  - attack.t1567.004
+logsource:
+category: process_creation
+product: windows
+detection:
+  sel_parent:
+  ParentImage|endswith: '\sqlservr.exe'
+Image|endswith:
+  - '\cmd.exe'
+  - '\powershell.exe'
+  - '\pwsh.exe'
+sel_curl:
+  CommandLine|contains: 'curl'
+sel_dest:
+  CommandLine|contains:
+    - 'ntfy.sh'
+    - 'webhook.site'
+condition: all of sel_*
+falsepositives:
+  - Sanctioned SQL Agent or xp_cmdshell jobs posting notifications (rare; confirm with DBA)
+level: high
