@@ -1,4 +1,4 @@
-// Purpose : Mirrors kql/01. Shells/LOLBins with web/DB parents (sqlservr, w3wp, lsphp, java, mysqld).
+// Purpose : Shells/LOLBins with web/DB parents (sqlservr, w3wp, lsphp, java, mysqld).
 // Data : ProcessRollup2 (Windows + Linux). Uses ParentBaseFileName.
 // Fidelity: High for sqlservr/w3wp/Critical markers; Medium otherwise.
 // Tuning : Baseline java/tomcat children per host; exclude known maintenance scripts.
