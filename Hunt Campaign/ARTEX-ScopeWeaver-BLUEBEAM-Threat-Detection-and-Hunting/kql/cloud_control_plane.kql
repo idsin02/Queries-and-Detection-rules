@@ -1,0 +1,43 @@
+// Purpose : Cloud control-plane actions observed in ARTEX intrusions (Azure + AWS + Power BI).
+// Data : AzureActivity, AzureDiagnostics (Key Vault, SQL audit), PowerBIActivity, AWSCloudTrail.
+// Fidelity: CodeDeploy probe archives / reported AMIs / scoped-credential drop = High. Everything else
+// is Hunting and needs a per-principal baseline.
+// Note : EC2 DryRun appears in CloudTrail as ErrorCode "Client.DryRunOperation"
+// (built from described technique, not a sample).
+// Tuning : Baseline ListKeys/SecretGet per app identity. Alert on first-seen SrcIP or UA per principal
+// (python urllib, Azure Python SDK from WSL2, Boto3).
+let Amis = dynamic(["ami-0661cce2d6259c605","ami-0b2c9d1f3edcfd709"]);
+union isfuzzy=true
+( AzureActivity
+| where OperationNameValue =~ "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION"
+| project TimeGenerated, Cloud = "Azure", Principal = Caller, SrcIP = CallerIpAddress,
+Action = OperationNameValue, Detail = tostring(_ResourceId), Priority = "Hunting" ),
+( AzureDiagnostics
+| where ResourceProvider == "MICROSOFT.KEYVAULT" and OperationName in ("SecretGet","SecretList")
+| project TimeGenerated, Cloud = "Azure", Principal = tostring(column_ifexists("identity_claim_appid_g", "")),
+SrcIP = CallerIPAddress, Action = OperationName, Detail = Resource, Priority = "Hunting" ),
+( AzureDiagnostics
+| where Category == "SQLSecurityAuditEvents"
+| where tostring(column_ifexists("statement_s", "")) has "DROP DATABASE SCOPED CREDENTIAL"
+| project TimeGenerated, Cloud = "Azure", Principal = tostring(column_ifexists("server_principal_name_s", "")),
+SrcIP = tostring(column_ifexists("client_ip_s", "")), Action = "DROP DATABASE SCOPED CREDENTIAL",
+Detail = tostring(column_ifexists("statement_s", "")), Priority = "High" ),
+( PowerBIActivity
+| where tostring(column_ifexists("Activity", "")) has "DatasourcesAsAdmin"
+| project TimeGenerated, Cloud = "PowerBI", Principal = tostring(column_ifexists("UserId", "")),
+SrcIP = tostring(column_ifexists("ClientIP", "")), Action = tostring(column_ifexists("Activity", "")),
+Detail = tostring(column_ifexists("DatasetName", "")), Priority = "Hunting" ),
+( AWSCloudTrail
+| where (EventName == "RunInstances" and (ErrorCode == "Client.DryRunOperation" or RequestParameters has_any (Amis)))
+or (EventName == "CreateDeployment" and RequestParameters matches regex @"(?i)(deploy|recon2?)_probe_[0-9a-f]{8,10}\.zip")
+or EventName in ("DescribeRepositories","DescribeVpcPeeringConnections")
+or (EventName == "GetBucketLifecycle" and UserIdentityType == "AnonymousPrincipal")
+| project TimeGenerated, Cloud = "AWS", Principal = UserIdentityArn, SrcIP = SourceIpAddress, Action = EventName,
+Detail = strcat(ErrorCode, " | ", UserAgent, " | ", substring(RequestParameters, 0, 300)),
+Priority = case(RequestParameters has_any (Amis) or EventName == "CreateDeployment", "High",
+EventName == "RunInstances" and UserAgent has "Boto3", "Medium",
+"Hunting") )
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Count = count(),
+Details = make_set(Detail, 10)
+by Cloud, Principal, SrcIP, Action, Priority
+| order by Priority asc, LastSeen desc
