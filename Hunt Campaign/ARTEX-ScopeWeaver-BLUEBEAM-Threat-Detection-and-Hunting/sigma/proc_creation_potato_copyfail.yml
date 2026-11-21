@@ -1,0 +1,31 @@
+title: Webshell Operator Privilege Escalation - Potato Family and CVE-2026-31431 PoC
+description: |
+  Detects JayPotato-style command lines (-t * -p <prog> -l <port>), PrintSpoofer renamed to msp.out,
+  McpManagementPotato, and fileless execution of the CVE-2026-31431 PoC (copy_fail_exp.py) piped
+  from curl into python3.
+references:
+  - https://learn.microsoft.com/en-us/troubleshoot/windows-server/windows-security/seimpersonateprivilege-secreateglobalprivilege
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.privilege-escalation
+  - attack.t1068
+  - attack.t1134
+  - attack.execution
+  - attack.t1059.006
+  - cve.2026-31431
+logsource:
+category: process_creation
+detection:
+sel_jaypotato:
+  CommandLine|re: '(?i)\s-t\s+\*\s+-p\s+\S+.*\s-l\s+\d+'
+sel_names:
+ CommandLine|contains:
+  - 'McpManagementPotato' 
+  - 'msp.out'
+  sel_copyfail:
+    CommandLine|contains: 'copy_fail_exp.py'
+condition: 1 of sel_*
+falsepositives:
+  - Red team or pentest use of Potato tools
+level: high
