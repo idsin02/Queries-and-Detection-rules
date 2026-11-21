@@ -1,0 +1,43 @@
+title: ARTEX and Weaver OA Webshell or Probe Requests
+description: |
+  Server-side indicators from ARTEX-driven intrusions: JSP webshell parameter schemes (t=&m=, k=&c=),
+  NTLM relay parameters through a webshell, the Weaver OA checkVsql SQLi probe, the Weaver
+  FileDownload servlet, and ARTEX probe markers.
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.initial-access
+  - attack.t1190
+  - attack.persistence
+  - attack.t1505.003
+  - attack.command-and-control
+  - attack.t1090.001
+logsource:
+category: webserver
+detection:
+sel_shell_tm:
+  cs-uri-query|re: '(?i)(^|&)t=[^&]+&m=(sql|ping|res|https)(&|$)'
+sel_shell_kc:
+  cs-uri-query|re: '(?i)(^|&)k=[^&]+&c='
+sel_relay:
+  cs-uri-query|contains|all:
+    - 'usr='
+    - 'pwd='
+    - 'sch=NTLM'
+sel_weaver:
+cs-uri-stem|contains:
+  - '/api/cube/form/checkVsql'
+  - '/weaver/weaver.file.FileDownload'
+sel_probe_stem:
+  cs-uri-stem|contains:
+    - 'artex'
+    - '/nuclei.svg'
+sel_probe_query:
+  cs-uri-query|contains:
+    - 'artex-probe-'
+    - 'Artex-Four-'
+condition: 1 of sel_*
+falsepositives:
+  - Legitimate Weaver FileDownload use (scope sel_weaver by source IP or auth state)
+  - Authorized nuclei scanning
+level: high
