@@ -1,0 +1,29 @@
+title: ARTEX AI Pentest Framework Command-Line Markers
+description: |
+  Detects literal ARTEX artifacts in process command lines: ntfy artex- topics, probe file names,
+  beacon strings, SQL module output, and intent-ID staged PowerShell executed with -QF/-OF arguments.
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.command-and-control
+  - attack.t1071.001
+  - attack.execution
+  - attack.t1059.001
+logsource:
+  category: process_creation
+detection:
+sel_literal:
+CommandLine|contains:
+  - 'ntfy.sh/artex-'
+  - 'artex_probe'
+  - 'artex-probe-'
+  - 'HELLO_FROM_'
+  - 'HELLO1298_TEST_041923'
+  - 'SQLPWN WROTE'
+sel_intent_ps:
+CommandLine|re: '(?i)-File\s+\S*i\d{3,5}_[0-9a-f]{6,10}\.ps1\s+-QF\s+\S+\.sql\s+-OF\s+\S+\.out'
+condition: 1 of sel_*
+falsepositives:
+  - Authorized engagements using ARTEX (confirm scope)
+  - Analysts testing these detections
+level: high
