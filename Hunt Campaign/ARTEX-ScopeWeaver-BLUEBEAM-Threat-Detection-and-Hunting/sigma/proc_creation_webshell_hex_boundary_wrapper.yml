@@ -1,0 +1,24 @@
+title: BLUEBEAM Webshell Client Hex-Boundary Command Wrapper
+description: |
+  Detects the command wrapper associated with the BLUEBEAM webshell client: each operator command
+  is bracketed by random hex echoes plus cd (Windows) or pwd (Linux), e.g.
+  'echo 5522ec0c9b6c;pwd;echo 09d8c8f0'.
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.persistence
+  - attack.t1505.003
+  - attack.execution
+  - attack.t1059.003
+  - attack.t1059.004
+logsource:
+  category: process_creation
+detection:
+  sel_win:
+    CommandLine|re: '(?i)&\s*echo\s+[0-9a-f]{4,16}\s*&\s*cd\s*&\s*echo\s+[0-9a-f]{4,16}'
+  sel_lin:
+    CommandLine|re: '(?i);\s*echo\s+[0-9a-f]{4,16};\s*pwd;\s*echo\s+[0-9a-f]{4,16}'
+condition: 1 of sel_*
+falsepositives:
+  - Other webshell managers using similar wrappers (still malicious)
+level: high
