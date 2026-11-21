@@ -1,0 +1,40 @@
+title: Scripted Upload to Webhook or Notification Service
+description: |
+  curl, PowerShell or Python uploading data to webhook.site or ntfy.sh. ARTEX operators used these
+  services to exfiltrate AD/LDAP dumps, krbtgt/gMSA secrets and LAPS attributes. Hunting rule:
+  both services are common in developer workflows.
+author: Dhruv Singh
+date: 2026-11-06
+tags:
+  - attack.exfiltration
+  - attack.t1567.004
+  - attack.command-and-control
+  - attack.t1071.001
+logsource:
+category: process_creation
+detection:
+sel_img:
+  Image|endswith:
+    - '\curl.exe'
+    - '/curl'
+    - '\powershell.exe'
+    - '\pwsh.exe'
+    - '\python.exe'
+    - '/python3'
+sel_dest:
+CommandLine|contains:
+  - 'webhook.site'
+  - 'ntfy.sh'
+sel_upload:
+  CommandLine|contains:
+    - ' -d '
+    - '-X POST'
+    - '--data'
+    - ' -F '
+    - 'Invoke-RestMethod'
+    - 'Invoke-WebRequest'
+condition: all of sel_*
+falsepositives:
+  - Developers or CI pipelines testing webhooks
+  - Monitoring scripts using ntfy.sh for alerting
+level: medium
